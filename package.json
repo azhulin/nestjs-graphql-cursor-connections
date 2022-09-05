@@ -1,0 +1,55 @@
+{
+  "name": "nestjs-graphql-cursor-connections",
+  "version": "1.0.0",
+  "description": "GraphQL Cursor Connections specification implementation for NestJS.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "format": "prettier --write \"src/**/*.ts\" \"src/**/*.js\"",
+    "lint": "tslint -p tsconfig.json",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run lint",
+    "preversion": "npm run lint",
+    "version": "npm run format && git add -A src",
+    "postversion": "git push && git push --tags"
+  },
+  "files": [
+    "dist/**/*"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/azhulin/nestjs-graphql-cursor-connections.git"
+  },
+  "keywords": [
+    "graphql",
+    "graphql-connections",
+    "nestjs",
+    "pagination"
+  ],
+  "author": "Alex Zhulin <alex.zhulin@ffwagency.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/azhulin/nestjs-graphql-cursor-connections",
+  "bugs": {
+    "url": "https://github.com/azhulin/nestjs-graphql-cursor-connections/issues"
+  },
+  "dependencies": {
+    "class-validator": "^0.13.2"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^8.0.0 || ^9.0.0",
+    "@nestjs/graphql": "^8.0.0 || ^9.0.0 || ^10.0.0",
+    "reflect-metadata": "^0.1.13"
+  },
+  "devDependencies": {
+    "@trivago/prettier-plugin-sort-imports": "^3.3.0",
+    "@types/node": "^18.7.14",
+    "@typescript-eslint/eslint-plugin": "^5.36.1",
+    "@typescript-eslint/parser": "^5.36.1",
+    "eslint": "8.22.0",
+    "eslint-config-prettier": "^8.5.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "prettier": "^2.7.1",
+    "typescript": "^4.8.2"
+  }
+}
