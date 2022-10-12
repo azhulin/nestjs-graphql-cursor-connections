@@ -14,6 +14,7 @@ specification implementation for NestJS.
 - [Arguments Adjusting](#arguments-adjusting)
 - [Pagination Algorithm](#pagination-algorithm)
 - [Offset Pagination](#offset-pagination)
+- [Dynamic Cursor (Sorting)](#dynamic-cursor-sorting)
 - [Additional Fields](#additional-fields)
   - [Connection Edge Additional Fields](#connection-edge-additional-fields) 
   - [Connection Additional Fields](#connection-additional-fields)
@@ -34,11 +35,14 @@ of a specific group ordered by email address using connections pagination
 pattern.
 
 ```ts
-import { Field, ID, ObjectType } from '@nestjs/graphql'
+import { Field, Int, ObjectType } from '@nestjs/graphql'
 
 @ObjectType()
 export class User {
-  @Field(() => ID)
+  @Field(() => Int)
+  public id!: number
+
+  @Field()
   public email!: string
 
   @Field()
@@ -51,7 +55,8 @@ export class User {
 
 ```
 type User {
-  email: ID!
+  id: Int!
+  email: String!
   name: String!
   groupId: String!
 }
@@ -285,6 +290,88 @@ And a total number of pages can be calculated in the following way:
 
 ```ts
 const totalPages = Math.ceil(connection.totalEdges / edgesPerPage)
+```
+
+## Dynamic Cursor (Sorting)
+
+There are cases where connection arguments can affect the cursor data
+generation. For example, `sortBy` argument.
+
+Assume we need the ability to sort users by ID and email fields:
+
+```ts
+export enum UsersSortBy {
+  Id = 'id',
+  Email = 'email',
+}
+```
+
+And we have the following connection arguments type:
+
+```ts
+import { ArgsType, Field } from '@nestjs/graphql'
+import { IsEnum } from 'class-validator'
+import { ConnectionArgs } from 'nestjs-graphql-cursor-connections'
+
+@ArgsType()
+export class UserConnectionArgs extends ConnectionArgs {
+  @IsEnum(UsersSortBy)
+  @Field(() => UsersSortBy)
+  public readonly sortBy!: UsersSortBy
+}
+```
+
+This connection arguments type produces the following GraphQL arguments:
+
+```
+after: String
+before: String
+first: Int
+last: Int
+sortBy: UsersSortBy!
+```
+
+Create a connection builder extending the `ConnectionBuilder` class and
+specifying `UserConnectionArgs` as the 5th generic argument. After this the
+`sortBy` argument can be accessed from `this.args`:
+
+```ts
+import { ConnectionBuilder } from 'nestjs-graphql-cursor-connections'
+
+type UserCursorData = { id: number } | { email: string }
+
+export class UserConnectionBuilder extends ConnectionBuilder<
+  UserConnection,
+  UserConnectionEdge,
+  User,
+  UserCursorData,
+  UserConnectionArgs
+> {
+  protected getCursorData(node: User): UserCursorData {
+    switch (this.args.sortBy) {
+      case UsersSortBy.Id:
+        return { id: node.id }
+      case UsersSortBy.Email:
+        return { email: node.email }
+    }
+  }
+
+  protected isValidCursorData(data: unknown): boolean {
+    switch (this.args.sortBy) {
+      case UsersSortBy.Id:
+        // Check that data is `{ id: number }`.
+        return this.isValidIdCursorData(data)
+      case UsersSortBy.Email:
+        // Check that data is `{ email: string }`.
+        return this.isValidEmailCursorData(data)
+    }
+  }
+
+  protected getCursorDataError(name: 'after' | 'before', value: string): null | Error {
+    return new Error(`Cursor argument '${name}' has invalid value '${value}'.`)
+  }
+  ...
+}
 ```
 
 ## Additional Fields

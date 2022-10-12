@@ -8,7 +8,10 @@ export abstract class ConnectionBuilder<
   TConnectionEdge extends ConnectionEdge<TNode>,
   TNode extends GqlTypeReference,
   TCursorData extends CursorData,
+  TConnectionArgs extends ConnectionArgs = ConnectionArgs,
 > {
+  public args: TConnectionArgs
+
   public after?: TCursorData
 
   public before?: TCursorData
@@ -17,7 +20,8 @@ export abstract class ConnectionBuilder<
 
   public last?: number
 
-  public constructor(args: ConnectionArgs, maxEdgesToReturn = 0) {
+  public constructor(args: TConnectionArgs, maxEdgesToReturn = 0) {
+    this.args = args
     const { after, before, first, last } = args
     after && (this.after = this.extractCursorData('after', after))
     before && (this.before = this.extractCursorData('before', before))
