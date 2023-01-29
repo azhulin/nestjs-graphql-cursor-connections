@@ -1,7 +1,8 @@
 # NestJS GraphQL Cursor Connections
 
-[GraphQL Cursor Connections](https://relay.dev/graphql/connections.htm) 
+[GraphQL Cursor Connections](https://relay.dev/graphql/connections.htm)
 specification implementation for NestJS.
+Provides a handling of cursor, offset, and hybrid (cursor + offset) pagination.
 
 ## Contents
 - [Installation](#installation)
@@ -9,14 +10,15 @@ specification implementation for NestJS.
   - [Connection Edge](#connection-edge)
   - [Connection](#connection)
   - [Connection Arguments](#connection-arguments)
+  - [Connection Page Info](#connection-page-info)
   - [Connection Builder](#connection-builder)
   - [Connection Resolver](#connection-resolver)
 - [Arguments Adjusting](#arguments-adjusting)
 - [Pagination Algorithm](#pagination-algorithm)
-- [Offset Pagination](#offset-pagination)
+- [Offset Pagination (Pager Mode)](#offset-pagination-pager-mode)
 - [Dynamic Cursor (Sorting)](#dynamic-cursor-sorting)
 - [Additional Fields](#additional-fields)
-  - [Connection Edge Additional Fields](#connection-edge-additional-fields) 
+  - [Connection Edge Additional Fields](#connection-edge-additional-fields)
   - [Connection Additional Fields](#connection-additional-fields)
 - [Fake Cursor Pagination](#fake-cursor-pagination)
   - [Fake Cursor Connection Builder](#fake-cursor-connection-builder)
@@ -30,8 +32,8 @@ npm i nestjs-graphql-cursor-connections
 
 ## Usage
 
-Assume we have users assigned to groups, and we need to provide a list of users 
-of a specific group ordered by email address using connections pagination 
+Assume we have users assigned to groups, and we need to provide a list of users
+of a specific group ordered by email address using connections pagination
 pattern.
 
 ```ts
@@ -64,7 +66,7 @@ type User {
 
 ### Connection Edge
 
-Create a connection edge type extending the class returned by the 
+Create a connection edge type extending the class returned by the
 `ConnectionEdge()` function passing the target GraphQL type to it.
 
 ```ts
@@ -79,14 +81,14 @@ This will produce the following GraphQL type:
 
 ```
 type UserConnectionEdge {
-  node: User!
   cursor: String!
+  node: User!
 }
 ```
 
 ### Connection
 
-Create a connection type extending the class returned by the `Connection()` 
+Create a connection type extending the class returned by the `Connection()`
 function passing the connection edge type to it.
 
 ```ts
@@ -101,16 +103,15 @@ This will produce the following GraphQL type:
 
 ```
 type UserConnection {
-  pageInfo: PageInfo!
   edges: [UserConnectionEdge!]!
-  totalEdges: Int!
+  pageInfo: PageInfo!
 }
 ```
 
 ### Connection Arguments
 
-Create a connection arguments type extending the `ConnectionArgs` class and add 
-any extra filtering/sorting arguments if needed. In our case we need a `groupId` 
+Create a connection arguments type extending the `ConnectionArgs` class and add
+any extra filtering/sorting arguments if needed. In our case we need a `groupId`
 argument to filter users.
 
 ```ts
@@ -133,12 +134,29 @@ after: String
 before: String
 first: Int
 last: Int
+edgesPerPage: Int  # The number of edges to display per page (enables pager mode).
+page: Int          # The number of a page to display (enables pager mode).
 groupId: String!
+```
+
+### Connection Page Info
+
+Connection page info is already created and produces the following GraphQL type:
+
+```
+hasPreviousPage: Boolean!
+hasNextPage: Boolean!
+startCursor: String!
+endCursor: String!
+totalEdges: Int!   # Total number of edges after applying the cursors.
+edgesPerPage: Int  # The number of edges displayed per page (in pager mode).
+page: Int          # The number of displayed page (in pager mode).
+totalPages: Int    # Total number of pages (in pager mode).
 ```
 
 ### Connection Builder
 
-Create a connection builder extending the `ConnectionBuilder` class and 
+Create a connection builder extending the `ConnectionBuilder` class and
 implement all of its abstract methods.
 
 ```ts
@@ -155,7 +173,7 @@ export class UserConnectionBuilder extends ConnectionBuilder<
    * Cursor data can be a number, a string, an array, or an object.
    */
   protected getCursorData(node: User): UserCursorData {
-    // In our case the cursor data is a string representing user email address.
+    // In our case the cursor data is a string representing user's email address.
     return node.email
   }
 
@@ -180,31 +198,30 @@ export class UserConnectionBuilder extends ConnectionBuilder<
 
 ### Connection Resolver
 
-Here is an example implementation of a query resolver. The implementation of a 
+Here is an example implementation of a query resolver. The implementation of a
 field resolver is similar.
 
 ```ts
-import { Injectable } from '@nestjs/common'
 import { Args, Query, Resolver } from '@nestjs/graphql'
 
-@Injectable()
 @Resolver()
 export class UserGraphqlResolver {
   public constructor(private readonly repository: UserRepository) {}
 
   @Query(() => UserConnection, { nullable: true })
-  public async groupUsers(@Args() args: UserConnectionArgs): Promise<null | UserConnection> {
+  public async usersByGroup(@Args() args: UserConnectionArgs): Promise<null | UserConnection> {
     const maxEdgesToReturn = 10
     const connectionBuilder = new UserConnectionBuilder(args, maxEdgesToReturn)
     const { groupId } = args
     // Contains the unpacked cursor data (user email) or `undefined`.
     const { after, before } = connectionBuilder
     // The result of the count users query below.
-    const totalEdges = await this.repository.countGroupUsers(groupId, { after, before })
+    // Can be cached to improve performance when no after/before arguments are used.
+    const totalEdges = await this.repository.countUsersByGroup(groupId, { after, before })
     // Returns the result set bounds: start, end, skip (start), take (end - start).
-    const { take, skip } = connectionBuilder.getBounds(totalEdges)
+    const { skip, take } = connectionBuilder.getBounds(totalEdges)
     // The result of the find users query below.
-    const users = await this.repository.findGroupUsers(groupId, { after, before, skip, take })
+    const users = await this.repository.findUsersByGroup(groupId, { after, before, skip, take })
     return connectionBuilder.build(users, totalEdges)
   }
 }
@@ -221,80 +238,77 @@ WHERE groupId = :groupId AND email > :after AND email < :before;
 
 ```postgresql
 SELECT * FROM users
-WHERE groupId = :groupId AND email > :after AND email < :before 
-ORDER BY email ASC 
+WHERE groupId = :groupId AND email > :after AND email < :before
+ORDER BY email ASC
 LIMIT :take OFFSET :skip;
 ```
 
 ## Arguments Adjusting
 
-If `maxEdgesToReturn` connection builder parameter is specified, and it is 
-greater than 0, the `first` and `last` arguments are being adjusted, so that the 
-number of edges returned never exceeds `maxEdgesToReturn`:
-- If both, `first` and `last` arguments are omitted, the `first` argument is set
-  to `maxEdgesToReturn`.
-- If only `first` argument is specified, and is greater than `maxEdgesToReturn`, 
-the `first` argument is set to `maxEdgesToReturn`.
-- If only `last` argument is specified, or both `first` and `last` arguments are 
-specified, and `last` argument is greater than `maxEdgesToReturn`, the `last` 
-argument is set to `maxEdgesToReturn`.
+If `maxEdgesToReturn` connection builder parameter is specified, and it is a
+positive integer, the `first`, `last`, and `edgesPerPage` arguments are being
+adjusted, so that the number of returned edges never exceeds the value of
+`maxEdgesToReturn`.
+
+If `maxEdgesToReturn` connection builder parameter is omitted, the number of
+returned edges is not limited.
 
 ## Pagination Algorithm
 
-To determine what edges to return, the connection evaluates the `after` and 
-`before` cursors to filter the edges, then evaluates `first` to slice the edges, 
-then `last` to slice the edges.
+To determine what edges to return, the connection evaluates the `after` and
+`before` cursors to filter the edges, (then, if pager mode is enabled, splits
+the edges into pages and slices them to contain only the selected page), then
+evaluates `first` to slice the edges, then `last` to slice the edges.
 
-Let we have a set of all edges: 
+Let's say we have a set of all edges:
 
 **A B C D E F G H I J K L M N O P Q R S T U V W X Y Z**
 
-If `after` is set and exists (`E`), remove all edges before and including 
+If `after` is set and exists (`E`), remove all edges before and including
 `after` edge:
 
 ~~A B C D E~~ **F G H I J K L M N O P Q R S T U V W X Y Z**
 
-If `before` is set and exists (`U`), remove all edges after and including 
+If `before` is set and exists (`V`), remove all edges after and including
 `before` edge:
 
-<sub>A B C D E</sub> **F G H I J K L M N O P Q R S T** ~~U V W X Y Z~~
+<sub>A B C D E</sub> **F G H I J K L M N O P Q R S T U** ~~V W X Y Z~~
 
-If `first` is set (`10`), and edges length greater than `first`, slice edges to 
+If `edgesPerPage` (`10`) or `page` (`1`) is set, split the edges into pages and
+slice them to contain only the selected page.
+
+<sub>A B C D E</sub> &lt;**F G H I J K L M N O**&gt; &lt;~~P Q R S T U~~&gt; <sub>V W X Y Z</sub>
+
+If `first` is set (`8`), and edges length greater than `first`, slice edges to
 be of length `first` by removing edges from the end.
 
-<sub>A B C D E</sub> **F G H I J K L M N O** ~~P Q R S T~~ <sub>U V W X Y Z</sub>
+<sub>A B C D E</sub> **F G H I J K L M** ~~N O~~ <sub>P Q R S T U V W X Y Z</sub>
 
-If `last` is set (`5`), and edges length greater than `last`, slice edges to be 
+If `last` is set (`4`), and edges length greater than `last`, slice edges to be
 of length `last` by removing edges from the start.
 
-<sub>A B C D E</sub> ~~F G H I J~~ **K L M N O** <sub>P Q R S T U V W X Y Z</sub>
+<sub>A B C D E</sub> ~~F G H I~~ **J K L M** <sub>N O P Q R S T U V W X Y Z</sub>
 
 Edges to return:
 
-<sub>A B C D E F G H I J</sub> **K L M N O** <sub>P Q R S T U V W X Y Z</sub>
+<sub>A B C D E F G H I</sub> **J K L M** <sub>N O P Q R S T U V W X Y Z</sub>
 
-## Offset Pagination
+## Offset Pagination (Pager Mode)
 
-Offset pagination can be achieved by combining `first` and `last` connection 
-arguments.
+To enable offset pagination (pager mode) provide the `edgesPerPage` and/or the
+`page` connection argument. If one of these arguments is omitted, the another
+one will use the default value: `edgesPerPage` defaults to the value of the
+`maxEdgesToReturn` connection builder parameter; `page` defaults to `1`.
 
-Let `edgesPerPage` is a number of edges to display per page, then the `N`th
-page can be retrieved using the following arguments:
-
-```
-first: edgesPerPage * N 
-last: edgesPerPage
-```
-
-And a total number of pages can be calculated in the following way:
-
-```ts
-const totalPages = Math.ceil(connection.totalEdges / edgesPerPage)
-```
+When pager mode is enabled, the connection page info will additionally contain
+the following fields:
+- `edgesPerPage`: the number of edges displayed per page;
+- `page`: the number of displayed page;
+- `totalPages`: total number of pages.
 
 ## Dynamic Cursor (Sorting)
 
-There are cases where connection arguments can affect the cursor data
+There are cases where custom connection arguments can affect the cursor data
 generation. For example, `sortBy` argument.
 
 Assume we need the ability to sort users by ID and email fields:
@@ -321,16 +335,6 @@ export class UserConnectionArgs extends ConnectionArgs {
 }
 ```
 
-This connection arguments type produces the following GraphQL arguments:
-
-```
-after: String
-before: String
-first: Int
-last: Int
-sortBy: UsersSortBy!
-```
-
 Create a connection builder extending the `ConnectionBuilder` class and
 specifying `UserConnectionArgs` as the 5th generic argument. After this the
 `sortBy` argument can be accessed from `this.args`:
@@ -351,6 +355,7 @@ export class UserConnectionBuilder extends ConnectionBuilder<
     switch (this.args.sortBy) {
       case UsersSortBy.Id:
         return { id: node.id }
+
       case UsersSortBy.Email:
         return { email: node.email }
     }
@@ -359,10 +364,11 @@ export class UserConnectionBuilder extends ConnectionBuilder<
   protected isValidCursorData(data: unknown): boolean {
     switch (this.args.sortBy) {
       case UsersSortBy.Id:
-        // Check that data is `{ id: number }`.
+        // Check that the data is `{ id: number }`.
         return this.isValidIdCursorData(data)
+
       case UsersSortBy.Email:
-        // Check that data is `{ email: string }`.
+        // Check that the data is `{ email: string }`.
         return this.isValidEmailCursorData(data)
     }
   }
@@ -378,15 +384,13 @@ export class UserConnectionBuilder extends ConnectionBuilder<
 
 ### Connection Edge Additional Fields
 
-Connection edge types may have additional fields related to the edge. There are 
+Connection edge types may have additional fields related to the edge. There are
 two ways to provide additional fields:
 - By creating a field resolver for a connection edge
 
 ```ts
-import { Injectable } from '@nestjs/common'
 import { Parent, ResolveField, Resolver } from '@nestjs/graphql'
 
-@Injectable()
 @Resolver(() => UserConnectionEdge)
 export class UserConnectionEdgeResolver {
   @ResolveField(() => Boolean)
@@ -397,7 +401,7 @@ export class UserConnectionEdgeResolver {
 }
 ```
 
-- By extending a connection edge type and overriding `createConnectionEdge()` 
+- By extending a connection edge type and overriding `createConnectionEdge()`
 method of the connection builder
 
 ```ts
@@ -436,15 +440,13 @@ type UserConnectionEdge {
 
 ### Connection Additional Fields
 
-Connection types may have additional fields related to the connection. There are 
+Connection types may have additional fields related to the connection. There are
 two ways to provide additional fields:
 - By creating a field resolver for a connection
 
 ```ts
-import { Injectable } from '@nestjs/common'
 import { Parent, ResolveField, Resolver } from '@nestjs/graphql'
 
-@Injectable()
 @Resolver(() => UserConnection)
 export class UserConnectionResolver {
   @ResolveField(() => Boolean)
@@ -455,7 +457,7 @@ export class UserConnectionResolver {
 }
 ```
 
-- By extending a connection type and overriding `createConnection()` method of 
+- By extending a connection type and overriding `createConnection()` method of
 the connection builder
 
 ```ts
@@ -488,26 +490,25 @@ In both cases the following GraphQL type will be produced:
 type UserConnection {
   pageInfo: PageInfo!
   edges: [UserConnectionEdge!]!
-  totalEdges: Int!
   additionalField: Boolean!
 }
 ```
 
 ## Fake Cursor Pagination
 
-In cases when node fields can not uniquely identify the node position in the 
-list, there is no way to create a real cursor, and the only way to paginate 
-through the list is to use offset pagination. 
+In cases when node fields can not uniquely identify the node position in the
+list, there is no way to create a real cursor, and the only way to paginate
+through the list is to use offset pagination.
 
-It is possible to hide the offset pagination behind the cursor pagination 
+It is possible to hide the offset pagination behind the cursor pagination
 interface, assuming that cursor is a node position in the list – a fake cursor.
 
-Create [Connection Edge](#connection-edge), [Connection](#connection), and 
+Create [Connection Edge](#connection-edge), [Connection](#connection), and
 [Connection Arguments](#connection-arguments).
 
 ### Fake Cursor Connection Builder
 
-Create a connection builder extending the `FakeCursorConnectionBuilder` class 
+Create a connection builder extending the `FakeCursorConnectionBuilder` class
 and implement all of its abstract methods.
 
 ```ts
@@ -529,29 +530,28 @@ export class UserFakeCursorConnectionBuilder extends FakeCursorConnectionBuilder
 
 ### Fake Cursor Connection Resolver
 
-Here is an example implementation of a query resolver. The implementation of a 
+Here is an example implementation of a query resolver. The implementation of a
 field resolver is similar.
 
 ```ts
-import { Injectable } from '@nestjs/common'
 import { Args, Query, Resolver } from '@nestjs/graphql'
 
-@Injectable()
 @Resolver()
 export class UserGraphqlResolver {
   public constructor(private readonly repository: UserRepository) {}
 
   @Query(() => UserConnection, { nullable: true })
-  public async groupUsers(@Args() args: UserConnectionArgs): Promise<null | UserConnection> {
+  public async usersByGroup(@Args() args: UserConnectionArgs): Promise<null | UserConnection> {
     const maxEdgesToReturn = 10
     const connectionBuilder = new UserFakeCursorConnectionBuilder(args, maxEdgesToReturn)
     const { groupId } = args
     // The result of the count users query below.
-    const totalEdges = await this.repository.countGroupUsers(groupId)
+    // Can be cached to improve performance.
+    const totalEdges = await this.repository.countUsersByGroup(groupId)
     // Returns the result set bounds: start, end, skip (start), take (end - start).
-    const { take, skip } = connectionBuilder.getBounds(totalEdges)
+    const { skip, take } = connectionBuilder.getBounds(totalEdges)
     // The result of the find users query below.
-    const users = await this.repository.findGroupUsers(groupId, { skip, take })
+    const users = await this.repository.findUsersByGroup(groupId, { skip, take })
     return connectionBuilder.build(users, totalEdges)
   }
 }
@@ -568,7 +568,7 @@ WHERE groupId = :groupId
 
 ```postgresql
 SELECT * FROM users
-WHERE groupId = :groupId 
+WHERE groupId = :groupId
 ORDER BY email ASC
 LIMIT :take OFFSET :skip;
 ```

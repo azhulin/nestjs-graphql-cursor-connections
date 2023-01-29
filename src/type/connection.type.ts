@@ -1,11 +1,10 @@
 import { Type } from '@nestjs/common'
-import { Field, GqlTypeReference, Int, ObjectType } from '@nestjs/graphql'
+import { Field, GqlTypeReference, ObjectType } from '@nestjs/graphql'
 import { ConnectionEdge, PageInfo } from '.'
 
 export interface Connection<TEdge extends ConnectionEdge<GqlTypeReference>> {
   pageInfo: PageInfo
   edges: TEdge[]
-  totalEdges: number
 }
 
 export function Connection<TEdge extends ConnectionEdge<GqlTypeReference>>(
@@ -18,9 +17,6 @@ export function Connection<TEdge extends ConnectionEdge<GqlTypeReference>>(
 
     @Field(() => [edgeType])
     public readonly edges!: TEdge[]
-
-    @Field(() => Int)
-    public readonly totalEdges!: number
   }
   return _Connection
 }
