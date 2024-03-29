@@ -1,37 +1,42 @@
 import { ArgsType, Field, Int } from '@nestjs/graphql'
-import { IsBase64, IsNotEmpty, IsOptional, Min } from 'class-validator'
+import { IsInt, IsNotEmpty, IsOptional, Length, Min } from 'class-validator'
+import { IsBase64 } from '../validation'
 
 @ArgsType()
 export class ConnectionArgs {
   @Field({ nullable: true })
+  @IsBase64({ urlSafe: true })
+  @Length(1)
   @IsOptional()
-  @IsNotEmpty()
-  @IsBase64()
-  public readonly after?: string
+  public readonly after?: null | string
 
   @Field({ nullable: true })
+  @IsBase64({ urlSafe: true })
+  @Length(1)
   @IsOptional()
-  @IsNotEmpty()
-  @IsBase64()
-  public readonly before?: string
+  public readonly before?: null | string
 
   @Field(() => Int, { nullable: true })
-  @IsOptional()
   @Min(1)
-  public readonly first?: number
+  @IsInt()
+  @IsOptional()
+  public readonly first?: null | number
 
   @Field(() => Int, { nullable: true })
-  @IsOptional()
   @Min(1)
-  public readonly last?: number
+  @IsInt()
+  @IsOptional()
+  public readonly last?: null | number
 
   @Field(() => Int, { nullable: true })
-  @IsOptional()
   @Min(1)
-  public readonly edgesPerPage?: number
+  @IsInt()
+  @IsOptional()
+  public readonly edgesPerPage?: null | number
 
   @Field(() => Int, { nullable: true })
-  @IsOptional()
   @Min(1)
-  public readonly page?: number
+  @IsInt()
+  @IsOptional()
+  public readonly page?: null | number
 }
