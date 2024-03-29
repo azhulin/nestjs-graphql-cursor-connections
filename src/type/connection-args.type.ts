@@ -4,13 +4,13 @@ import { IsBase64 } from '../validation'
 
 @ArgsType()
 export class ConnectionArgs {
-  @Field({ nullable: true })
+  @Field(() => String, { nullable: true })
   @IsBase64({ urlSafe: true })
   @Length(1)
   @IsOptional()
   public readonly after?: null | string
 
-  @Field({ nullable: true })
+  @Field(() => String, { nullable: true })
   @IsBase64({ urlSafe: true })
   @Length(1)
   @IsOptional()
